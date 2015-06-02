@@ -5,6 +5,8 @@ using System.Text;
 
 public class TabBiribitMenu : Silver.UI.TabImmediate 
 {
+	private string address = "thatguystudio.com";
+	private string password = "";
 	private string clientName = "ClientName";
 	private string appId = "app-client-test";
 	private string chat = "";
@@ -50,6 +52,17 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 
 			if(ui.Button("Reload scene"))
 				Application.LoadLevel(Application.loadedLevel);
+
+			ui.Separator(1);
+			ui.LineSeparator();
+
+			ui.LabelField("Address:");
+			address = ui.StringField("Address", address, Silver.UI.Immediate.FlagMask.NoFieldLabel);
+			ui.LabelField("Password:");
+			password = ui.StringField("Password", password, Silver.UI.Immediate.FlagMask.NoFieldLabel);
+			if (ui.Button("Connect"))
+				client.Connect(address, 0, password);
+			
 
 			ui.Separator(1);
 			ui.LineSeparator();

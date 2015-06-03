@@ -18,8 +18,24 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 	private List<string> roomStrings = new List<string>();
 	private List<string> chats = new List<string>();
 
+	class RoomEntries
+	{
+		public uint RoomId = 0;
+		public List<string> entries = new List<string>();
+	}
+
+	private Dictionary<uint, RoomEntries> entries = new Dictionary<uint,RoomEntries>();
+
+	private uint connectionId = 0;
+
 	private int slots = 4;
 	private int jointSlot = 0;
+
+	static char[] hexTable = new char[]{ '0', '1', '2' , '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
+	private static bool IsPrintableCharacter(byte candidate)
+	{
+		return !(candidate < 0x20 || candidate > 127);
+	}
 
 	public override string TabName()
 	{
@@ -36,13 +52,67 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 			var secs = recv.when / 1000;
 			var mins = secs / 60;
 			b.Append(mins % 60); b.Append(":");b.Append(secs % 60);
-			b.Append(" ["); b.Append(recv.room_id); b.Append(",");
+			b.Append("[Room "); b.Append(recv.room_id); b.Append(", Player ");
 			b.Append(recv.slot_id); b.Append( "]: ");
-			b.Append(Encoding.ASCII.GetString(recv.data));
+			b.Append(ASCIIEncoding.ASCII.GetString(recv.data));
 
 			chats.Reverse();
 			chats.Add(b.ToString());
 			chats.Reverse();
+		}
+
+		if (connectionId > BiribitClient.UnassignedId)
+		{
+			RoomEntries roomEntries = null;
+			if (!entries.TryGetValue(connectionId, out roomEntries)) {
+				roomEntries = new RoomEntries();
+				entries.Add(connectionId, roomEntries);
+			}
+
+			uint joinedRoom = client.GetJoinedRoomId(connectionId);
+			if (roomEntries.RoomId != joinedRoom) {
+				roomEntries.RoomId = joinedRoom;
+				roomEntries.entries.Clear();
+			}
+
+			if (roomEntries.RoomId > BiribitClient.UnassignedId)
+			{
+				List<string> connectionEntries = roomEntries.entries;
+				uint count = client.GetEntriesCount(connectionId);
+				for (uint i = (uint)connectionEntries.Count + 1; i <= count; i++)
+				{
+					BiribitClient.Entry entry = client.GetEntry(connectionId, i);
+					if (entry.id > BiribitClient.UnassignedId)
+					{
+						bool isPrintable = true;
+						StringBuilder hex = new StringBuilder();
+						for (int it = 0; it < entry.data.Length; it++)
+						{
+							byte val = entry.data[it];
+							bool ok = ((it + 1) == entry.data.Length && val == 0) || IsPrintableCharacter(val);
+							isPrintable = ok && isPrintable;
+
+							char bytehex1 = hexTable[(val & 0xF0) >> 4];
+							char bytehex2 = hexTable[(val & 0x0F) >> 0];
+							hex.Append(bytehex1);
+							hex.Append(bytehex2);
+						}
+
+						StringBuilder ss = new StringBuilder();
+						ss.Append("[Player "); ss.Append(entry.slot_id); ss.Append("]: ");
+						if (isPrintable)
+							ss.Append(ASCIIEncoding.ASCII.GetString(entry.data));
+						else
+							ss.Append(hex.ToString());
+
+						connectionEntries.Add(ss.ToString());
+					}
+					else
+					{
+						break;
+					}
+				}
+			}
 		}
 
 		ui.VerticalLayout(() =>
@@ -97,7 +167,11 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 			}
 
 			BiribitClient.ServerConnection[] serverConnectionArray = client.GetConnections();
-			if (serverConnectionArray.Length > 0)
+			if (serverConnectionArray.Length == 0)
+			{
+				connectionId = BiribitClient.UnassignedId;
+			}
+			else
 			{
 				serverConnectionStrings.Clear();
 				foreach (BiribitClient.ServerConnection serverConnection in serverConnectionArray)
@@ -113,8 +187,9 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 				ui.LineSeparator();
 				serverConnectionSelected = ui.Popup("Connection", serverConnectionSelected, serverConnectionStrings.ToArray(), Silver.UI.Immediate.FlagMask.NoFieldLabel);
 				BiribitClient.ServerConnection connection = serverConnectionArray[serverConnectionSelected];
+				connectionId = connection.id;
 				if (ui.Button("Disconnect"))
-					client.Disconnect(connection.id);
+					client.Disconnect(connectionId);
 
 				if (ui.Button("Disconnect all"))
 					client.Disconnect();
@@ -124,10 +199,10 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 				clientName = ui.StringField("Client name", clientName);
 				appId = ui.StringField("Application Id", appId);
 				if (ui.Button("Set name and appid"))
-					client.SetLocalClientParameters(connection.id, clientName, appId);
+					client.SetLocalClientParameters(connectionId, clientName, appId);
 
-				BiribitClient.RemoteClient[] remoteClientsArray = client.GetRemoteClients(connection.id);
-				uint localClientId = client.GetLocalClientId(connection.id);
+				BiribitClient.RemoteClient[] remoteClientsArray = client.GetRemoteClients(connectionId);
+				uint localClientId = client.GetLocalClientId(connectionId);
 				if (remoteClientsArray.Length > 0)
 				{
 					ui.Separator(1);
@@ -152,24 +227,24 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 				{
 					slots = ui.IntField("Num slots", slots);
 					if (ui.Button("Create"))
-						client.CreateRoom(connection.id, (uint) slots);
+						client.CreateRoom(connectionId, (uint)slots);
 				});
 				
 				ui.HorizontalLayout(() =>
 				{
 					jointSlot = ui.IntField("Joining slot", jointSlot);
 				if (ui.Button("& Join"))
-					client.CreateRoom(connection.id, (uint)slots, (uint) jointSlot);
+					client.CreateRoom(connectionId, (uint)slots, (uint)jointSlot);
 				});
 
 				if (ui.Button("Random or create")) {
-					client.JoinRandomOrCreateRoom(connection.id, (uint)slots);
+					client.JoinRandomOrCreateRoom(connectionId, (uint)slots);
 				}
-				
 
-				BiribitClient.Room[] roomArray = client.GetRooms(connection.id);
-				uint joinedRoomId = client.GetJoinedRoomId(connection.id);
-				uint joinedRoomSlot = client.GetJoinedRoomSlot(connection.id);
+
+				BiribitClient.Room[] roomArray = client.GetRooms(connectionId);
+				uint joinedRoomId = client.GetJoinedRoomId(connectionId);
+				uint joinedRoomSlot = client.GetJoinedRoomSlot(connectionId);
 				if (roomArray.Length > 0)
 				{
 					roomStrings.Clear();
@@ -194,13 +269,13 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 					BiribitClient.Room rm = roomArray[roomSelected];
 
 					if (ui.Button("Join"))
-						client.JoinRoom(connection.id, rm.id);
+						client.JoinRoom(connectionId, rm.id);
 
 					if (ui.Button("Leave"))
-						client.JoinRoom(connection.id, 0);
+						client.JoinRoom(connectionId, 0);
 
 					if (ui.Button("Refresh rooms"))
-						client.RefreshRooms(connection.id);
+						client.RefreshRooms(connectionId);
 					
 					ui.Separator(1);
 					ui.LabelField("Room");
@@ -223,7 +298,7 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 				else
 				{
 					if (ui.Button("Refresh rooms"))
-						client.RefreshRooms(connection.id);
+						client.RefreshRooms(connectionId);
 				}
 
 				if (joinedRoomId != BiribitClient.UnassignedId)
@@ -234,14 +309,30 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 					chat = ui.StringField("Chat", chat, Silver.UI.Immediate.FlagMask.NoFieldLabel);
 					if(ui.Button("Send") && !string.IsNullOrEmpty(chat.Trim()))
 					{
-						byte[] data = Encoding.ASCII.GetBytes(chat.Trim());
-						client.SendBroadcast(connection.id, data);
+						byte[] data = ASCIIEncoding.ASCII.GetBytes(chat.Trim());
+						client.SendBroadcast(connectionId, data);
+						chat = "";
+					}
+
+					if (ui.Button("Send as entry") && !string.IsNullOrEmpty(chat.Trim()))
+					{
+						byte[] data = ASCIIEncoding.ASCII.GetBytes(chat.Trim());
+						client.SendEntry(connectionId, data);
 						chat = "";
 					}
 
 					foreach(string linechat in chats) {
 						ui.LabelField(linechat, 14);
 					}
+				}
+
+				foreach (KeyValuePair<uint, RoomEntries> pair in entries)
+				{
+					ui.LabelField("Connection " + pair.Key + ". Room " + pair.Value.RoomId + ".");
+					ui.LineSeparator();
+					
+					foreach(string entry in pair.Value.entries)
+						ui.LabelField(entry, 14);
 				}
 			}
 		});

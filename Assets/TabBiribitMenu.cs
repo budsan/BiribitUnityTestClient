@@ -2,20 +2,24 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Text;
+using System;
 
-public class TabBiribitMenu : Silver.UI.TabImmediate 
+public class TabBiribitMenu : Silver.UI.TabImmediate, BiribitListener
 {
 	private string address = "thatguystudio.com";
 	private string password = "";
 	private string clientName = "ClientName";
 	private string appId = "app-client-test";
 	private string chat = "";
+
 	private int serverInfoSelected = 0;
 	private int serverConnectionSelected = 0;
 	private int roomSelected = 0;
+
 	private List<string> serverInfoStrings = new List<string>();
 	private List<string> serverConnectionStrings = new List<string>();
 	private List<string> roomStrings = new List<string>();
+	private List<string> connectionEntries = new List<string>();
 	private List<string> chats = new List<string>();
 
 	class RoomEntries
@@ -44,24 +48,10 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 
 	public override void DrawUI()
 	{
-		BiribitClient client = Biribit.Instance;
-		BiribitClient.Received recv;
-		while ((recv = client.PullReceived()) != null)
-		{
-			StringBuilder b = new StringBuilder();
-			var secs = recv.when / 1000;
-			var mins = secs / 60;
-			b.Append(mins % 60); b.Append(":");b.Append(secs % 60);
-			b.Append("[Room "); b.Append(recv.room_id); b.Append(", Player ");
-			b.Append(recv.slot_id); b.Append( "]: ");
-			b.Append(ASCIIEncoding.ASCII.GetString(recv.data));
+		BiribitManager manager = BiribitManager.Instance;
+		manager.AddListener(this);
 
-			chats.Reverse();
-			chats.Add(b.ToString());
-			chats.Reverse();
-		}
-
-		if (connectionId > BiribitClient.UnassignedId)
+		if (connectionId > Biribit.Client.UnassignedId)
 		{
 			RoomEntries roomEntries = null;
 			if (!entries.TryGetValue(connectionId, out roomEntries)) {
@@ -69,49 +59,10 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 				entries.Add(connectionId, roomEntries);
 			}
 
-			uint joinedRoom = client.GetJoinedRoomId(connectionId);
+			uint joinedRoom = manager.JoinedRoom(connectionId);
 			if (roomEntries.RoomId != joinedRoom) {
 				roomEntries.RoomId = joinedRoom;
 				roomEntries.entries.Clear();
-			}
-
-			if (roomEntries.RoomId > BiribitClient.UnassignedId)
-			{
-				List<string> connectionEntries = roomEntries.entries;
-				uint count = client.GetEntriesCount(connectionId);
-				for (uint i = (uint)connectionEntries.Count + 1; i <= count; i++)
-				{
-					BiribitClient.Entry entry = client.GetEntry(connectionId, i);
-					if (entry.id > BiribitClient.UnassignedId)
-					{
-						bool isPrintable = true;
-						StringBuilder hex = new StringBuilder();
-						for (int it = 0; it < entry.data.Length; it++)
-						{
-							byte val = entry.data[it];
-							bool ok = ((it + 1) == entry.data.Length && val == 0) || IsPrintableCharacter(val);
-							isPrintable = ok && isPrintable;
-
-							char bytehex1 = hexTable[(val & 0xF0) >> 4];
-							char bytehex2 = hexTable[(val & 0x0F) >> 0];
-							hex.Append(bytehex1);
-							hex.Append(bytehex2);
-						}
-
-						StringBuilder ss = new StringBuilder();
-						ss.Append("[Player "); ss.Append(entry.slot_id); ss.Append("]: ");
-						if (isPrintable)
-							ss.Append(ASCIIEncoding.ASCII.GetString(entry.data));
-						else
-							ss.Append(hex.ToString());
-
-						connectionEntries.Add(ss.ToString());
-					}
-					else
-					{
-						break;
-					}
-				}
 			}
 		}
 
@@ -131,25 +82,25 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 			ui.LabelField("Password:");
 			password = ui.StringField("Password", password, Silver.UI.Immediate.FlagMask.NoFieldLabel);
 			if (ui.Button("Connect"))
-				client.Connect(address, 0, password);
+				manager.Connect(address, 0, password);
 			
 
 			ui.Separator(1);
 			ui.LineSeparator();
 			if (ui.Button("Discover in LAN"))
-				client.DiscoverOnLan();
+				manager.DiscoverServersOnLAN();
 
 			if (ui.Button("Clear list of servers"))
-				client.ClearDiscoverInfo();
+				manager.ClearServerList();
 
 			if (ui.Button("Refresh servers"))
-				client.RefreshDiscoverInfo();
+				manager.RefreshServerList();
 
-			BiribitClient.ServerInfo[] serverInfoArray = client.GetDiscoverInfo();
+			Biribit.Native.ServerInfo[] serverInfoArray = manager.ServerInfo;
 			if (serverInfoArray.Length > 0)
 			{
 				serverInfoStrings.Clear();
-				foreach (BiribitClient.ServerInfo serverInfo in serverInfoArray)
+				foreach (Biribit.Native.ServerInfo serverInfo in serverInfoArray)
 				{
 					StringBuilder builder = new StringBuilder();
 					builder.Append(serverInfo.name); builder.Append(", ping "); builder.Append(serverInfo.ping);
@@ -160,21 +111,21 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 				ui.LabelField("Server");
 				ui.LineSeparator();
 				serverInfoSelected = ui.Popup("Server", serverInfoSelected, serverInfoStrings.ToArray(), Silver.UI.Immediate.FlagMask.NoFieldLabel);
-				BiribitClient.ServerInfo info = serverInfoArray[serverInfoSelected];
+				Biribit.Native.ServerInfo info = serverInfoArray[serverInfoSelected];
 
 				if (ui.Button("Connect selected"))
-					client.Connect(info.addr, info.port);
+					manager.Connect(info.addr, info.port);
 			}
 
-			BiribitClient.ServerConnection[] serverConnectionArray = client.GetConnections();
+			Biribit.Native.Connection[] serverConnectionArray = manager.Connections;
 			if (serverConnectionArray.Length == 0)
 			{
-				connectionId = BiribitClient.UnassignedId;
+				connectionId = Biribit.Client.UnassignedId;
 			}
 			else
 			{
 				serverConnectionStrings.Clear();
-				foreach (BiribitClient.ServerConnection serverConnection in serverConnectionArray)
+				foreach (Biribit.Native.Connection serverConnection in serverConnectionArray)
 				{
 					StringBuilder builder = new StringBuilder();
 					builder.Append(serverConnection.id); builder.Append(": ");
@@ -186,29 +137,29 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 				ui.LabelField("Connection");
 				ui.LineSeparator();
 				serverConnectionSelected = ui.Popup("Connection", serverConnectionSelected, serverConnectionStrings.ToArray(), Silver.UI.Immediate.FlagMask.NoFieldLabel);
-				BiribitClient.ServerConnection connection = serverConnectionArray[serverConnectionSelected];
+				Biribit.Native.Connection connection = serverConnectionArray[serverConnectionSelected];
 				connectionId = connection.id;
 				if (ui.Button("Disconnect"))
-					client.Disconnect(connectionId);
+					manager.Disconnect(connectionId);
 
 				if (ui.Button("Disconnect all"))
-					client.Disconnect();
+					manager.Disconnect();
 
 				ui.Separator(1);
 				ui.LineSeparator();
 				clientName = ui.StringField("Client name", clientName);
 				appId = ui.StringField("Application Id", appId);
 				if (ui.Button("Set name and appid"))
-					client.SetLocalClientParameters(connectionId, clientName, appId);
+					manager.SetLocalClientParameters(connectionId, clientName, appId);
 
-				BiribitClient.RemoteClient[] remoteClientsArray = client.GetRemoteClients(connectionId);
-				uint localClientId = client.GetLocalClientId(connectionId);
+				Biribit.Native.RemoteClient[] remoteClientsArray = manager.RemoteClients(connectionId);
+				uint localClientId = manager.LocalClientId(connectionId);
 				if (remoteClientsArray.Length > 0)
 				{
 					ui.Separator(1);
 					ui.LabelField("Client list");
 					ui.LineSeparator();
-					foreach (BiribitClient.RemoteClient remoteClient in remoteClientsArray)
+					foreach (Biribit.Native.RemoteClient remoteClient in remoteClientsArray)
 					{
 						StringBuilder builder = new StringBuilder();
 						builder.Append(remoteClient.id); builder.Append(": ");
@@ -219,7 +170,6 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 					}
 				}
 
-
 				ui.Separator(1);
 				ui.LabelField("Create room");
 				ui.LineSeparator();
@@ -227,28 +177,27 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 				{
 					slots = ui.IntField("Num slots", slots);
 					if (ui.Button("Create"))
-						client.CreateRoom(connectionId, (uint)slots);
+						manager.CreateRoom(connectionId, (byte)slots);
 				});
 				
 				ui.HorizontalLayout(() =>
 				{
 					jointSlot = ui.IntField("Joining slot", jointSlot);
 				if (ui.Button("& Join"))
-					client.CreateRoom(connectionId, (uint)slots, (uint)jointSlot);
+						manager.CreateRoom(connectionId, (byte)slots, (byte)jointSlot);
 				});
 
 				if (ui.Button("Random or create")) {
-					client.JoinRandomOrCreateRoom(connectionId, (uint)slots);
+					manager.JoinRandomOrCreateRoom(connectionId, (byte)slots);
 				}
 
-
-				BiribitClient.Room[] roomArray = client.GetRooms(connectionId);
-				uint joinedRoomId = client.GetJoinedRoomId(connectionId);
-				uint joinedRoomSlot = client.GetJoinedRoomSlot(connectionId);
+				Biribit.Room[] roomArray = manager.Rooms(connectionId);
+				uint joinedRoomId = manager.JoinedRoom(connectionId);
+				uint joinedRoomSlot = manager.JoinedRoomSlot(connectionId);
 				if (roomArray.Length > 0)
 				{
 					roomStrings.Clear();
-					foreach (BiribitClient.Room room in roomArray)
+					foreach (Biribit.Room room in roomArray)
 					{
 						StringBuilder builder = new StringBuilder();
 						builder.Append("Room "); builder.Append(room.id);
@@ -266,16 +215,16 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 					ui.LabelField("Rooms");
 					ui.LineSeparator();
 					roomSelected = ui.Popup("Room", roomSelected, roomStrings.ToArray(), Silver.UI.Immediate.FlagMask.NoFieldLabel);
-					BiribitClient.Room rm = roomArray[roomSelected];
+					Biribit.Room rm = roomArray[roomSelected];
 
 					if (ui.Button("Join"))
-						client.JoinRoom(connectionId, rm.id);
+						manager.JoinRoom(connectionId, rm.id);
 
 					if (ui.Button("Leave"))
-						client.JoinRoom(connectionId, 0);
+						manager.JoinRoom(connectionId, 0);
 
 					if (ui.Button("Refresh rooms"))
-						client.RefreshRooms(connectionId);
+						manager.RefreshRooms(connectionId);
 					
 					ui.Separator(1);
 					ui.LabelField("Room");
@@ -283,47 +232,23 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 
 					for (int i = 0; i < rm.slots.Length; i++)
 					{
-						if (rm.slots[i] == BiribitClient.UnassignedId)
+						if (rm.slots[i] == Biribit.Client.UnassignedId)
 							ui.LabelField("Slot " + i.ToString() + ": Free", 14);
 						else
 						{
-							int pos = client.GetRemoteClientArrayPos(rm.slots[i]);
+							int pos = manager.RemoteClients(connectionId, rm.slots[i]);
+							Debug.Log("pos: " + pos);
 							if (pos < 0)
 								ui.LabelField("Slot " + i.ToString() + ": " + rm.slots[i], 14);
 							else
-								ui.LabelField("Slot " + i.ToString() + ": " + remoteClientsArray[i].name, 14);
+								ui.LabelField("Slot " + i.ToString() + ": " + manager.RemoteClients(connectionId)[pos].name, 14);
 						}
 					}
 				}
 				else
 				{
 					if (ui.Button("Refresh rooms"))
-						client.RefreshRooms(connectionId);
-				}
-
-				if (joinedRoomId != BiribitClient.UnassignedId)
-				{
-					ui.Separator(1);
-					ui.LabelField("Chat");
-					ui.LineSeparator();
-					chat = ui.StringField("Chat", chat, Silver.UI.Immediate.FlagMask.NoFieldLabel);
-					if(ui.Button("Send") && !string.IsNullOrEmpty(chat.Trim()))
-					{
-						byte[] data = ASCIIEncoding.ASCII.GetBytes(chat.Trim());
-						client.SendBroadcast(connectionId, data);
-						chat = "";
-					}
-
-					if (ui.Button("Send as entry") && !string.IsNullOrEmpty(chat.Trim()))
-					{
-						byte[] data = ASCIIEncoding.ASCII.GetBytes(chat.Trim());
-						client.SendEntry(connectionId, data);
-						chat = "";
-					}
-
-					foreach(string linechat in chats) {
-						ui.LabelField(linechat, 14);
-					}
+						manager.RefreshRooms(connectionId);
 				}
 
 				foreach (KeyValuePair<uint, RoomEntries> pair in entries)
@@ -335,6 +260,148 @@ public class TabBiribitMenu : Silver.UI.TabImmediate
 						ui.LabelField(entry, 14);
 				}
 			}
+
+			ui.Separator(1);
+			ui.LabelField("Notifications");
+			ui.LineSeparator();
+			if (connectionId > Biribit.Client.UnassignedId)
+			{
+				chat = ui.StringField("Chat", chat, Silver.UI.Immediate.FlagMask.NoFieldLabel);
+				if (ui.Button("Send") && !string.IsNullOrEmpty(chat.Trim()))
+				{
+					byte[] data = ASCIIEncoding.ASCII.GetBytes(chat.Trim());
+					manager.SendBroadcast(connectionId, data);
+					chat = "";
+				}
+
+				if (ui.Button("Send as entry") && !string.IsNullOrEmpty(chat.Trim()))
+				{
+					byte[] data = ASCIIEncoding.ASCII.GetBytes(chat.Trim());
+					manager.SendEntry(connectionId, data);
+					chat = "";
+				}
+			}
+
+			foreach (string linechat in chats) {
+				ui.LabelField(linechat, 14);
+			}
+
+			ui.Separator(1);
+			ui.LabelField("Entries");
+			ui.LineSeparator();
+			foreach (string lineentry in connectionEntries){
+				ui.LabelField(lineentry, 14);
+			}
 		});
+	}
+
+	void BiribitListener.OnConnected(uint connectionId)
+	{
+		StringBuilder b = new StringBuilder();
+		b.Append("[You have been connected on "); b.Append(connectionId); b.Append(" connection].");
+
+		chats.Reverse();
+		chats.Add(b.ToString());
+		chats.Reverse();
+	}
+
+	void BiribitListener.OnDisconnected(uint connectionId)
+	{
+		StringBuilder b = new StringBuilder();
+		b.Append("[You have been disconnected on "); b.Append(connectionId); b.Append(" connection].");
+
+		chats.Reverse();
+		chats.Add(b.ToString());
+		chats.Reverse();
+	}
+
+	void BiribitListener.OnJoinedRoom(uint connectionId, uint roomId, byte slotId)
+	{
+		StringBuilder b = new StringBuilder();
+		b.Append("[You joined at room"); b.Append(roomId);
+		b.Append(" as a player ");
+		b.Append(slotId + 1); b.Append("].");
+
+		chats.Reverse();
+		chats.Add(b.ToString());
+		chats.Reverse();
+	}
+
+	void BiribitListener.OnJoinedRoomPlayerJoined(uint connectionId, uint clientId, byte slotId)
+	{
+		StringBuilder b = new StringBuilder();
+		b.Append("[Client "); b.Append(clientId);
+		b.Append(" joined the the room as a player ");
+		b.Append(slotId+1); b.Append("].");
+
+		chats.Reverse();
+		chats.Add(b.ToString());
+		chats.Reverse();
+	}
+
+	void BiribitListener.OnJoinedRoomPlayerLeft(uint connectionId, uint clientId, byte slotId)
+	{
+		StringBuilder b = new StringBuilder();
+		b.Append("[Player "); b.Append(slotId + 1); b.Append(" left the room].");
+
+		chats.Reverse();
+		chats.Add(b.ToString());
+		chats.Reverse();
+	}
+
+	void BiribitListener.OnBroadcast(Biribit.BroadcastEvent evnt)
+	{
+		StringBuilder b = new StringBuilder();
+		var secs = evnt.when / 1000;
+		var mins = secs / 60;
+		b.Append(mins % 60); b.Append(":"); b.Append(secs % 60);
+		b.Append("[Room "); b.Append(evnt.room_id); b.Append(", Player ");
+		b.Append(evnt.slot_id); b.Append("]: ");
+		b.Append(ASCIIEncoding.ASCII.GetString(evnt.data));
+
+		chats.Reverse();
+		chats.Add(b.ToString());
+		chats.Reverse();
+	}
+
+	void BiribitListener.OnEntriesChanged(uint connectionId)
+	{
+		List<Biribit.Entry> entries = BiribitManager.Instance.JoinedRoomEntries(connectionId);
+		for (int i = connectionEntries.Count + 1; i <= entries.Count; i++)
+		{
+			Biribit.Entry entry = entries[i];
+			bool isPrintable = true;
+			StringBuilder hex = new StringBuilder();
+			for (int it = 0; it < entry.data.Length; it++)
+			{
+				byte val = entry.data[it];
+				bool ok = ((it + 1) == entry.data.Length && val == 0) || IsPrintableCharacter(val);
+				isPrintable = ok && isPrintable;
+
+				char bytehex1 = hexTable[(val & 0xF0) >> 4];
+				char bytehex2 = hexTable[(val & 0x0F) >> 0];
+				hex.Append(bytehex1);
+				hex.Append(bytehex2);
+			}
+
+			StringBuilder ss = new StringBuilder();
+			ss.Append("[Player "); ss.Append(entry.slot_id + 1); ss.Append("]: ");
+			if (isPrintable)
+				ss.Append(Encoding.ASCII.GetString(entry.data));
+			else
+				ss.Append(hex.ToString());
+
+			connectionEntries.Add(ss.ToString());
+		}
+	}
+
+	void BiribitListener.OnLeaveRoom(uint connectionId)
+	{
+		StringBuilder b = new StringBuilder();
+		b.Append("[You have left the room.]");
+
+		chats.Reverse();
+		chats.Add(b.ToString());
+		chats.Reverse();
 	}
 }
